@@ -230,10 +230,10 @@ class GeMBiddingDataExtractor {
             // IMPROVED: Extract text from all pages with better error handling
             for (let i = 1; i <= pdf.numPages; i++) {
                 try {
-                    const page = await pdf.getPage(i);
-                    const textContent = await page.getTextContent();
-                    const pageText = textContent.items.map(item => item.str).join(' ');
-                    fullText += pageText + '\n';
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+                fullText += pageText + '\n';
                 } catch (pageError) {
                     console.warn(`Error processing page ${i}:`, pageError);
                     // Continue with other pages
@@ -305,9 +305,9 @@ class GeMBiddingDataExtractor {
         return data;
     }
 
-    // SAME LOGIC AS PYTHON: extractBuyer
+    // FIXED: extractBuyer - Remove "Department Name" and clean up buyer information
     extractBuyer(text) {
-        // Look for Ministry/State Name patterns (SAME AS PYTHON)
+        // Look for Ministry/State Name patterns (IMPROVED)
         const patterns = [
             /Ministry\s+Of\s+[A-Za-z\s&]+/i,
             /Ministry\s+[A-Za-z\s&]+/i,
@@ -317,9 +317,40 @@ class GeMBiddingDataExtractor {
         for (const pattern of patterns) {
             const match = text.match(pattern);
             if (match) {
-                return match[0].trim();
+                let buyer = match[0].trim();
+                
+                // Clean up the buyer name - remove "Department Name" and similar
+                buyer = buyer.replace(/\s*Department\s+Name\s*$/i, '');
+                buyer = buyer.replace(/\s*Organisation\s+Name\s*$/i, '');
+                buyer = buyer.replace(/\s*Office\s+Name\s*$/i, '');
+                buyer = buyer.replace(/\s*Buyer\s+Email\s*$/i, '');
+                
+                // Remove any trailing commas or extra spaces
+                buyer = buyer.replace(/[,\s]+$/, '').trim();
+                
+                if (buyer.length > 5) {
+                    console.log('Found buyer:', buyer);
+                    return buyer;
+                }
             }
         }
+        
+        // Fallback: look for specific ministry patterns
+        const ministryPatterns = [
+            'Ministry of Coal',
+            'Ministry of Defence', 
+            'Ministry of Petroleum and Natural Gas',
+            'Ministry of Commerce and Industry'
+        ];
+        
+        for (const ministry of ministryPatterns) {
+            if (text.includes(ministry)) {
+                console.log('Found ministry from pattern:', ministry);
+                return ministry;
+            }
+        }
+        
+        console.log('No buyer found, using default');
         return 'Ministry of Defence';
     }
 
@@ -474,26 +505,27 @@ class GeMBiddingDataExtractor {
         return 'Not Found';
     }
 
-    // COMPLETELY REWRITTEN: extractItemCategory - Focus on actual item data, not policy text
+    // COMPLETELY REWRITTEN: extractItemCategory - Extract actual items from GeM bidding PDFs
     extractItemCategory(text) {
         const lines = text.split('\n');
-        const itemList = [];
+        const items = [];
         
-        // Look for the actual item list section, not policy text
+        // Look for the actual item list section
         let inItemSection = false;
-        let itemSectionStart = -1;
+        let foundItems = false;
         
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             
             // Look for the start of actual item specifications
-            if (line.includes('VARIOUS TYPES OF ELECTRICAL SPARES') || 
-                line.includes('Item Category/') || 
+            if (line.includes('Item Category/') || 
                 line.includes('मद केटेगरी') ||
-                (line.includes('Bid Details') && line.includes('बिड विवरण'))) {
+                line.includes('VARIOUS TYPES OF ELECTRICAL SPARES') ||
+                line.includes('CIRCUIT BREAKER') ||
+                line.includes('Bid Details') && line.includes('बिड विवरण')) {
                 
                 inItemSection = true;
-                itemSectionStart = i;
+                console.log('Found item section at line:', i, 'Content:', line);
                 continue;
             }
             
@@ -504,8 +536,10 @@ class GeMBiddingDataExtractor {
                 if (['Experience Criteria', 'Preference to Make In India', 'Purchase preference for MSEs', 
                      'Estimated Bid Value', 'Past Performance', 'Technical Specifications',
                      'Consignees/Reporting Officer', 'Buyer Added Bid', 'Input Tax Credit',
-                     'EMD Detail', 'Evaluation Method', 'Inspection Required'].some(stop => 
+                     'EMD Detail', 'Evaluation Method', 'Inspection Required', 'Advisory',
+                     'Searched Strings', 'Relevant Categories', 'MSE Exemption'].some(stop => 
                      lineClean.includes(stop))) {
+                    console.log('Stopping at line:', i, 'due to:', lineClean);
                     break;
                 }
                 
@@ -518,28 +552,88 @@ class GeMBiddingDataExtractor {
                     !lineClean.includes('Categories selected') &&
                     !lineClean.startsWith('मम') &&
                     !lineClean.startsWith('अधिसूचना') &&
-                    lineClean.length > 5 &&
+                    lineClean.length > 10 &&
                     !lineClean.includes('Policy') &&
                     !lineClean.includes('criteria') &&
                     !lineClean.includes('preference') &&
                     !lineClean.includes('percentage') &&
                     !lineClean.includes('registration') &&
-                    !lineClean.includes('financial year')) {
+                    !lineClean.includes('financial year') &&
+                    !lineClean.includes('Advisory') &&
+                    !lineClean.includes('Department Name') &&
+                    !lineClean.includes('Organisation Name') &&
+                    !lineClean.includes('Office Name') &&
+                    !lineClean.includes('Buyer Email')) {
                     
-                    // Clean up the line and add to item list
+                    // Clean up the line
                     let cleanLine = lineClean;
                     cleanLine = cleanLine.replace(/^\d+\.\s*/, ''); // Remove numbering
                     cleanLine = cleanLine.replace(/^[^\w\s]*\s*/, ''); // Remove special chars at start
+                    cleanLine = cleanLine.replace(/\s+/g, ' ').trim(); // Normalize spaces
                     
-                    if (cleanLine.length > 10) { // Only add meaningful lines
-                        itemList.push(cleanLine);
+                    if (cleanLine.length > 10 && cleanLine.length < 300) {
+                        // Check if this looks like an actual item (not policy text)
+                        const hasItemIndicators = 
+                            cleanLine.includes('PART NO.') ||
+                            cleanLine.includes('CIRCUIT BREAKER') ||
+                            cleanLine.includes('Switch') ||
+                            cleanLine.includes('Socket') ||
+                            cleanLine.includes('Plug') ||
+                            cleanLine.includes('Holder') ||
+                            cleanLine.includes('Cable') ||
+                            cleanLine.includes('Lamp') ||
+                            cleanLine.includes('Light') ||
+                            cleanLine.includes('Contactor') ||
+                            cleanLine.includes('Relay') ||
+                            cleanLine.includes('Timer') ||
+                            cleanLine.includes('Diode') ||
+                            cleanLine.includes('Insulation') ||
+                            cleanLine.includes('Capacitor') ||
+                            cleanLine.includes('Volt') ||
+                            cleanLine.includes('Amp') ||
+                            cleanLine.includes('Watt') ||
+                            cleanLine.includes('sq.mm') ||
+                            cleanLine.includes('mFD') ||
+                            cleanLine.includes('Hz') ||
+                            cleanLine.includes('Phase') ||
+                            cleanLine.includes('Pole') ||
+                            cleanLine.includes('Range') ||
+                            cleanLine.includes('Make') ||
+                            cleanLine.includes('Brand') ||
+                            cleanLine.includes('Model') ||
+                            cleanLine.includes('Type');
+                        
+                        if (hasItemIndicators) {
+                            items.push(cleanLine);
+                            foundItems = true;
+                            console.log('Found item:', cleanLine);
+                        }
                     }
                 }
             }
         }
         
-        // If we didn't find items in the main section, look for specific electrical component patterns
-        if (itemList.length === 0) {
+        // If we didn't find items in the main section, look for specific patterns
+        if (!foundItems) {
+            console.log('No categorized items found, looking for specific patterns...');
+            
+            // Look for circuit breaker patterns
+            const circuitBreakerPatterns = [
+                /CIRCUIT\s+BREAKER\s+[A-Z\s]+PART\s+NO\.\s+[A-Z0-9]+/gi,
+                /Circuit\s+Breaker\s+[A-Za-z\s]+Part\s+No\.\s+[A-Z0-9]+/gi,
+                /[A-Z]+\s+PART\s+NO\.\s+[A-Z0-9]+/gi
+            ];
+            
+            for (const pattern of circuitBreakerPatterns) {
+                const matches = text.match(pattern);
+                if (matches) {
+                    items.push(...matches);
+                    foundItems = true;
+                    console.log('Found circuit breaker pattern:', matches);
+                }
+            }
+            
+            // Look for other electrical component patterns
             const electricalPatterns = [
                 /Switch.*?Socket.*?\d+V.*?\d+A/gi,
                 /Plug.*?Top.*?\d+A/gi,
@@ -559,71 +653,96 @@ class GeMBiddingDataExtractor {
             for (const pattern of electricalPatterns) {
                 const matches = text.match(pattern);
                 if (matches) {
-                    itemList.push(...matches);
+                    items.push(...matches);
+                    foundItems = true;
                 }
             }
         }
         
-        // Filter and clean the item list
-        const cleanItems = itemList
-            .filter(item => item.length > 10 && item.length < 200) // Remove too short or too long items
-            .slice(0, 50); // Limit to first 50 items to avoid overwhelming Excel
-        
-        if (cleanItems.length > 0) {
+        // Format the found items
+        if (items.length > 0) {
+            // Clean and deduplicate items
+            const cleanItems = [...new Set(items)]
+                .filter(item => item.length > 10 && item.length < 300)
+                .slice(0, 20); // Limit to first 20 items
+            
+            console.log('Found items:', cleanItems.length);
             return cleanItems.join(' | ');
         }
         
+        console.log('No items found');
         return 'No items found - may be policy document or scanned image';
     }
 
-    // COMPLETELY REWRITTEN: extractTechnicalSpec - Extract actual technical specs, not document references
+    // IMPROVED: extractTechnicalSpec - Show full specification details, not truncated text
     extractTechnicalSpec(text) {
         const lines = text.split('\n');
         const techSpecs = [];
         
-        // Look for actual technical specifications in the item descriptions
+        // Look for Technical Specifications section
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             
-            // Look for lines containing technical specifications
-            if (line.includes('VARIOUS TYPES OF ELECTRICAL SPARES') || 
-                line.includes('Item Category/') || 
-                line.includes('मद केटेगरी') ||
-                (line.includes('Bid Details') && line.includes('बिड विवरण'))) {
+            if (line.includes('Technical Specifications/') || 
+                line.includes('Technical Specifications') ||
+                line.includes('तकनीकी विशिष्टियाँ')) {
                 
-                // Look ahead for technical specifications
-                for (let j = i + 1; j < Math.min(i + 30, lines.length); j++) {
+                console.log('Found Technical Specifications section at line:', i);
+                
+                // Look ahead for specification details
+                for (let j = i + 1; j < Math.min(i + 100, lines.length); j++) {
                     const currentLine = lines[j].trim();
                     
-                    // Stop if we hit policy sections
-                    if (['Experience Criteria', 'Preference to Make In India', 'Purchase preference for MSEs', 
-                         'Estimated Bid Value', 'Past Performance', 'Technical Specifications',
-                         'Consignees/Reporting Officer', 'Buyer Added Bid', 'Input Tax Credit'].some(stop => 
+                    // Stop if we hit next major section
+                    if (['Item Category', 'मद केटेगरी', 'Experience Criteria', 'Preference to Make In India', 
+                         'Purchase preference for MSEs', 'Estimated Bid Value', 'Past Performance',
+                         'Consignees/Reporting Officer', 'Buyer Added Bid', 'Input Tax Credit',
+                         'Advisory', 'Bid Details', 'बिड विवरण'].some(stop => 
                          currentLine.includes(stop))) {
+                        console.log('Stopping at line:', j, 'due to:', currentLine);
                         break;
                     }
                     
-                    // Extract voltage, current, power, and other technical specifications
+                    // Look for specification content
                     if (currentLine && currentLine.length > 10) {
-                        const voltageMatch = currentLine.match(/(\d+)\s*V/gi);
-                        const currentMatch = currentLine.match(/(\d+)\s*A/gi);
-                        const powerMatch = currentLine.match(/(\d+)\s*W/gi);
-                        const frequencyMatch = currentLine.match(/(\d+)\s*Hz/gi);
-                        const sizeMatch = currentLine.match(/(\d+)\s*sq\.mm/gi);
-                        const capacitanceMatch = currentLine.match(/(\d+\.?\d*)\s*mFD/gi);
-                        const timerMatch = currentLine.match(/(\d+)\s*to\s*(\d+)\s*S/gi);
-                        const relayMatch = currentLine.match(/range\s*(\d+)\s*to\s*(\d+)A/gi);
+                        // Check for technical specification patterns
+                        const hasSpecIndicators = 
+                            currentLine.includes('Specification') ||
+                            currentLine.includes('Document') ||
+                            currentLine.includes('BOQ') ||
+                            currentLine.includes('View File') ||
+                            currentLine.includes('Download') ||
+                            currentLine.includes('Click here') ||
+                            currentLine.includes('Open') ||
+                            currentLine.includes('Access') ||
+                            currentLine.includes('IS:') ||
+                            currentLine.includes('IEC') ||
+                            currentLine.includes('conforming to') ||
+                            currentLine.includes('as per') ||
+                            currentLine.includes('Standard') ||
+                            currentLine.includes('Type') ||
+                            currentLine.includes('Range') ||
+                            currentLine.includes('Make') ||
+                            currentLine.includes('Brand') ||
+                            currentLine.includes('Model') ||
+                            currentLine.includes('Part No.') ||
+                            currentLine.includes('Voltage') ||
+                            currentLine.includes('Current') ||
+                            currentLine.includes('Power') ||
+                            currentLine.includes('Frequency') ||
+                            currentLine.includes('Phase') ||
+                            currentLine.includes('Pole');
                         
-                        if (voltageMatch || currentMatch || powerMatch || frequencyMatch || 
-                            sizeMatch || capacitanceMatch || timerMatch || relayMatch) {
-                            
-                            let spec = currentLine;
+                        if (hasSpecIndicators) {
                             // Clean up the specification
+                            let spec = currentLine;
                             spec = spec.replace(/^\d+\.\s*/, ''); // Remove numbering
                             spec = spec.replace(/^[^\w\s]*\s*/, ''); // Remove special chars
+                            spec = spec.replace(/\s+/g, ' ').trim(); // Normalize spaces
                             
-                            if (spec.length > 15 && spec.length < 150) {
+                            if (spec.length > 15 && spec.length < 500) { // Increased length limit
                                 techSpecs.push(spec);
+                                console.log('Found tech spec:', spec);
                             }
                         }
                     }
@@ -632,33 +751,44 @@ class GeMBiddingDataExtractor {
             }
         }
         
-        // If we didn't find specific specs, look for common electrical specifications
+        // If we didn't find specs in the Technical Specifications section,
+        // look for them in the entire document
         if (techSpecs.length === 0) {
-            const commonSpecs = [
-                '230V AC', '415V AC', '24V DC', '30V DC',
-                '16A', '32A', '40A', '100A',
-                '60W', '1000W', '1.5KW',
-                '50Hz', '10W', '12W',
-                '1.5 sq.mm', '2.5 sq.mm', '4 sq.mm', '10 sq.mm', '16 sq.mm', '25 sq.mm', '35 sq.mm', '50 sq.mm', '70 sq.mm', '95 sq.mm',
-                '2.5 mFD', '8 mFD',
-                '3 to 60S', '0.1 to 30S',
-                '4 to 6A', '30 to 40A'
+            console.log('No tech specs found in Technical Specifications section, searching entire document...');
+            
+            // Look for specification patterns throughout the text
+            const specPatterns = [
+                /IS:\s*\d+[^,]*/gi,
+                /IEC\s*\d+[^,]*/gi,
+                /conforming\s+to[^,]*/gi,
+                /as\s+per[^,]*/gi,
+                /Type\s+[A-Z][^,]*/gi,
+                /Range\s+\d+[^,]*/gi,
+                /Make\s+[A-Z][^,]*/gi,
+                /Brand\s+[A-Z][^,]*/gi,
+                /Model\s+[A-Z][^,]*/gi,
+                /Part\s+No\.\s+[A-Z0-9]+/gi
             ];
             
-            for (const spec of commonSpecs) {
-                if (text.includes(spec)) {
-                    techSpecs.push(spec);
+            for (const pattern of specPatterns) {
+                const matches = text.match(pattern);
+                if (matches) {
+                    techSpecs.push(...matches);
                 }
             }
         }
         
-        // Filter and return unique specifications
-        const uniqueSpecs = [...new Set(techSpecs)];
-        if (uniqueSpecs.length > 0) {
-            return uniqueSpecs.slice(0, 10).join(' | '); // Limit to first 10 specs
+        // Return the found technical specifications
+        if (techSpecs.length > 0) {
+            const uniqueSpecs = [...new Set(techSpecs)];
+            const result = uniqueSpecs.slice(0, 10).join(' | '); // Limit to first 10 specs
+            
+            console.log('Final tech specs found:', uniqueSpecs.length);
+            return result;
         }
         
-        return 'Technical specifications extracted from item descriptions';
+        console.log('No technical specifications found');
+        return 'Technical specifications available in document';
     }
 
     createSampleData(filename) {
@@ -678,63 +808,122 @@ class GeMBiddingDataExtractor {
         };
     }
 
+    // NEW FUNCTION: Categorize bids as active or expired
+    categorizeBids(data) {
+        const now = new Date();
+        const activeBids = [];
+        const expiredBids = [];
+        
+        data.forEach(bid => {
+            try {
+                // Parse start date
+                const startDateStr = bid['BID Start Date'];
+                let startDate = null;
+                
+                if (startDateStr && startDateStr !== 'Not Found') {
+                    // Handle different date formats
+                    if (startDateStr.includes('-')) {
+                        const [day, month, year] = startDateStr.split('-');
+                        startDate = new Date(year, month - 1, day);
+                    } else if (startDateStr.includes('/')) {
+                        const [day, month, year] = startDateStr.split('/');
+                        startDate = new Date(year, month - 1, day);
+                    }
+                }
+                
+                // Parse validity period
+                const validityStr = bid['BID Offer Validity'];
+                let validityDays = 0;
+                
+                if (validityStr && validityStr !== 'Not Found') {
+                    const match = validityStr.match(/(\d+)/);
+                    if (match) {
+                        validityDays = parseInt(match[1]);
+                    }
+                }
+                
+                // Calculate end date
+                let endDate = null;
+                if (startDate && validityDays > 0) {
+                    endDate = new Date(startDate);
+                    endDate.setDate(endDate.getDate() + validityDays);
+                }
+                
+                // Categorize bid
+                if (endDate && endDate > now) {
+                    activeBids.push({
+                        ...bid,
+                        'BID End Date': endDate.toLocaleDateString('en-GB'),
+                        'Status': 'Active'
+                    });
+                } else {
+                    expiredBids.push({
+                        ...bid,
+                        'BID End Date': endDate ? endDate.toLocaleDateString('en-GB') : 'Unknown',
+                        'Status': 'Expired'
+                    });
+                }
+                
+            } catch (error) {
+                console.warn('Error categorizing bid:', error);
+                // If we can't categorize, put in expired by default
+                expiredBids.push({
+                    ...bid,
+                    'BID End Date': 'Unknown',
+                    'Status': 'Unknown'
+                });
+            }
+        });
+        
+        return { activeBids, expiredBids };
+    }
+
     async createExcelFile() {
         if (this.extractedData.length === 0) {
             throw new Error('No data to export');
         }
 
-        // Create workbook and worksheet
+        // Categorize bids
+        const { activeBids, expiredBids } = this.categorizeBids(this.extractedData);
+
+        // Create workbook
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.json_to_sheet(this.extractedData);
-
-        // IMPROVED: Better column sizing for long content
-        const colWidths = [];
-        const maxColWidth = 100; // Maximum column width for readability
         
-        this.extractedData.forEach(row => {
-            Object.keys(row).forEach((key, index) => {
-                const keyLength = key.length;
-                const valueLength = String(row[key]).length;
-                const currentMax = colWidths[index] || 0;
-                colWidths[index] = Math.max(currentMax, keyLength, Math.min(valueLength, maxColWidth));
-            });
-        });
-
-        // Set column widths with better formatting
-        ws['!cols'] = colWidths.map(width => ({ 
-            width: Math.min(width + 3, maxColWidth + 5), // Add padding, cap at max
-            wrapText: true // Enable text wrapping for long content
-        }));
-
-        // IMPROVED: Set row heights for better readability
-        ws['!rows'] = [];
-        for (let i = 0; i <= this.extractedData.length; i++) {
-            ws['!rows'][i] = { hpt: 25 }; // Set row height to 25 points
+        // Create main data worksheet
+        const wsMain = XLSX.utils.json_to_sheet(this.extractedData);
+        this.formatWorksheet(wsMain, 'Main Data');
+        XLSX.utils.book_append_sheet(wb, wsMain, 'All Bids');
+        
+        // Create active bids worksheet
+        if (activeBids.length > 0) {
+            const wsActive = XLSX.utils.json_to_sheet(activeBids);
+            this.formatWorksheet(wsActive, 'Active Bids');
+            XLSX.utils.book_append_sheet(wb, wsActive, 'Active Bids');
         }
+        
+        // Create expired bids worksheet
+        if (expiredBids.length > 0) {
+            const wsExpired = XLSX.utils.json_to_sheet(expiredBids);
+            this.formatWorksheet(wsExpired, 'Expired Bids');
+            XLSX.utils.book_append_sheet(wb, wsExpired, 'Expired Bids');
+        }
+        
+        // Create summary worksheet
+        const summaryData = [
+            { 'Category': 'Total Bids', 'Count': this.extractedData.length },
+            { 'Category': 'Active Bids', 'Count': activeBids.length },
+            { 'Category': 'Expired Bids', 'Count': expiredBids.length },
+            { 'Category': 'Success Rate', 'Count': `${((activeBids.length / this.extractedData.length) * 100).toFixed(1)}%` }
+        ];
+        const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+        this.formatWorksheet(wsSummary, 'Summary');
+        XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
-        // IMPROVED: Add some basic styling to header row
-        const headerRow = 1;
-        Object.keys(this.extractedData[0]).forEach((key, index) => {
-            const cellRef = XLSX.utils.encode_cell({ r: headerRow - 1, c: index });
-            if (!ws[cellRef]) {
-                ws[cellRef] = { v: key };
-            }
-            // Make header bold and centered
-            ws[cellRef].s = {
-                font: { bold: true },
-                alignment: { horizontal: 'center', vertical: 'center' },
-                fill: { fgColor: { rgb: "E6E6FA" } } // Light purple background
-            };
-        });
-
-        // Add worksheet to workbook
-        XLSX.utils.book_append_sheet(wb, ws, 'Extracted Data');
-
-        // IMPROVED: Generate Excel file with better options
+        // Generate Excel file with better options
         const excelBuffer = XLSX.write(wb, { 
             bookType: 'xlsx', 
             type: 'array',
-            compression: true // Enable compression for better file size
+            compression: true
         });
         
         // Create download link with timestamp
@@ -744,12 +933,67 @@ class GeMBiddingDataExtractor {
         const downloadBtn = document.getElementById('downloadBtn');
         downloadBtn.href = url;
         
-        // IMPROVED: Better filename with timestamp
+        // Better filename with timestamp
         const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
         downloadBtn.download = `gem_bidding_extracted_data_${timestamp}.xlsx`;
         
         // Clean up the URL after a delay
-        setTimeout(() => URL.revokeObjectURL(url), 60000); // Clean up after 1 minute
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+
+    // NEW FUNCTION: Format worksheet with consistent styling
+    formatWorksheet(ws, title) {
+        // Auto-size columns
+        const colWidths = [];
+        const maxColWidth = 100;
+        
+        // Get all data rows
+        const dataRows = [];
+        for (const cell in ws) {
+            if (cell[0] === '!') continue; // Skip special properties
+            const row = parseInt(cell.replace(/[A-Z]/g, ''));
+            if (!dataRows.includes(row)) dataRows.push(row);
+        }
+        
+        dataRows.forEach(row => {
+            Object.keys(ws).forEach(cell => {
+                if (cell[0] === '!') return;
+                const col = cell.replace(/\d/g, '');
+                const colIndex = XLSX.utils.decode_col(col);
+                const cellValue = ws[cell].v || '';
+                const valueLength = String(cellValue).length;
+                
+                colWidths[colIndex] = Math.max(colWidths[colIndex] || 0, 
+                    Math.min(valueLength, maxColWidth));
+            });
+        });
+
+        // Set column widths with better formatting
+        ws['!cols'] = colWidths.map(width => ({ 
+            width: Math.min(width + 3, maxColWidth + 5),
+            wrapText: true
+        }));
+
+        // Set row heights for better readability
+        ws['!rows'] = [];
+        const maxRow = Math.max(...dataRows);
+        for (let i = 0; i <= maxRow; i++) {
+            ws['!rows'][i] = { hpt: 25 };
+        }
+
+        // Add styling to header row
+        const headerRow = 1;
+        Object.keys(ws).forEach(cell => {
+            if (cell[0] === '!') return;
+            const row = parseInt(cell.replace(/[A-Z]/g, ''));
+            if (row === headerRow) {
+                ws[cell].s = {
+                    font: { bold: true },
+                    alignment: { horizontal: 'center', vertical: 'center' },
+                    fill: { fgColor: { rgb: "E6E6FA" } }
+                };
+            }
+        });
     }
 
     showProgress() {
@@ -768,19 +1012,55 @@ class GeMBiddingDataExtractor {
 
     showDownloadSection() {
         document.getElementById('downloadSection').style.display = 'block';
-        this.showExtractionSummary();
     }
 
-    // NEW FUNCTION: Show summary of extracted data
+    // IMPROVED: Show summary of extracted data with bid categorization
     showExtractionSummary() {
         const summaryDiv = document.getElementById('extractionSummary');
         if (!summaryDiv || this.extractedData.length === 0) return;
 
+        // Categorize bids for summary
+        const { activeBids, expiredBids } = this.categorizeBids(this.extractedData);
+
         let summaryHTML = '<h4>Extraction Summary</h4>';
         
+        // Overall statistics
+        summaryHTML += `
+            <div class="summary-item">
+                <span class="summary-label">Total Bids Processed:</span>
+                <span class="summary-value">${this.extractedData.length}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Active Bids:</span>
+                <span class="summary-value" style="color: #28a745;">${activeBids.length}</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Expired Bids:</span>
+                <span class="summary-value" style="color: #dc3545;">${expiredBids.length}</span>
+            </div>
+            <hr style="margin: 15px 0; border: none; border-top: 1px solid #e9ecef;">
+        `;
+        
+        // File details
         this.extractedData.forEach((data, index) => {
             const filename = this.uploadedFiles[index]?.name || `File ${index + 1}`;
-            summaryHTML += `<div class="summary-item"><span class="summary-label">File:</span><span class="summary-value">${filename}</span></div>`;
+            const isActive = activeBids.some(bid => 
+                bid['BID Number'] === data['BID Number'] || 
+                bid['BID Start Date'] === data['BID Start Date']
+            );
+            const statusColor = isActive ? '#28a745' : '#dc3545';
+            const statusText = isActive ? 'Active' : 'Expired';
+            
+            summaryHTML += `
+                <div class="summary-item">
+                    <span class="summary-label">File:</span>
+                    <span class="summary-value">${filename}</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Status:</span>
+                    <span class="summary-value" style="color: ${statusColor}; font-weight: 600;">${statusText}</span>
+                </div>
+            `;
             
             // Show key extracted fields
             const keyFields = ['BID Number', 'Buyer', 'State', 'Total Quantity'];
@@ -793,8 +1073,8 @@ class GeMBiddingDataExtractor {
             
             // Show if Item Category was found
             if (data['Item Category'] && data['Item Category'] !== 'Not Found') {
-                const itemCount = data['Item Category'].split('|').length;
-                summaryHTML += `<div class="summary-item"><span class="summary-label">Items Found:</span><span class="summary-value">${itemCount} categories</span></div>`;
+                const itemCount = data['Item Category'].split('\n').length;
+                summaryHTML += `<div class="summary-item"><span class="summary-label">Categories Found:</span><span class="summary-value">${itemCount} groups</span></div>`;
             }
             
             if (index < this.extractedData.length - 1) {
@@ -851,45 +1131,69 @@ class GeMBiddingDataExtractor {
 }
 
 // Initialize the GeM Bidding Data Extractor application
-const app = new GeMBiddingDataExtractor();
+try {
+    console.log('Initializing GeM Bidding Data Extractor...');
+    const app = new GeMBiddingDataExtractor();
+    console.log('App created successfully:', app);
 
-// Export the app for global access
-window.app = app;
+    // Export the app for global access
+    window.app = app;
+    console.log('App exported to window.app:', window.app);
+    
+    // Verify the app is accessible
+    if (window.app && typeof window.app.extractDataFromPDF === 'function') {
+        console.log('✅ App is properly initialized and accessible');
+    } else {
+        console.error('❌ App initialization failed - methods not available');
+    }
+    
+} catch (error) {
+    console.error('❌ Error initializing app:', error);
+    console.error('Stack trace:', error.stack);
+}
 
 // Add debug functionality
-window.app.toggleDebug = function() {
-    const debugSection = document.getElementById('debugSection');
-    const debugContent = document.getElementById('debugContent');
-    
-    if (debugSection.style.display === 'none' || !debugSection.style.display) {
-        debugSection.style.display = 'block';
-        debugContent.textContent = JSON.stringify({
-            uploadedFiles: this.uploadedFiles.map(f => ({ name: f.name, size: f.size })),
-            extractedData: this.extractedData,
-            timestamp: new Date().toISOString()
-        }, null, 2);
-    } else {
-        debugSection.style.display = 'none';
-    }
-};
+if (window.app) {
+    window.app.toggleDebug = function() {
+        const debugSection = document.getElementById('debugSection');
+        const debugContent = document.getElementById('debugContent');
+        
+        if (debugSection && debugContent) {
+            if (debugSection.style.display === 'none' || !debugSection.style.display) {
+                debugSection.style.display = 'block';
+                debugContent.textContent = JSON.stringify({
+                    uploadedFiles: this.uploadedFiles.map(f => ({ name: f.name, size: f.size })),
+                    extractedData: this.extractedData,
+                    timestamp: new Date().toISOString()
+                }, null, 2);
+            } else {
+                debugSection.style.display = 'none';
+            }
+        } else {
+            console.warn('Debug elements not found');
+        }
+    };
 
-// NEW FUNCTION: Show console debug information
-window.app.showConsoleDebug = function() {
-    if (this.extractedData.length > 0) {
-        console.log('=== EXTRACTED DATA DEBUG ===');
-        console.log('Full extracted data:', this.extractedData);
-        
-        this.extractedData.forEach((data, index) => {
-            console.log(`\n--- File ${index + 1}: ${this.uploadedFiles[index]?.name} ---`);
-            Object.entries(data).forEach(([key, value]) => {
-                console.log(`${key}:`, value);
+    // NEW FUNCTION: Show console debug information
+    window.app.showConsoleDebug = function() {
+        if (this.extractedData.length > 0) {
+            console.log('=== EXTRACTED DATA DEBUG ===');
+            console.log('Full extracted data:', this.extractedData);
+            
+            this.extractedData.forEach((data, index) => {
+                console.log(`\n--- File ${index + 1}: ${this.uploadedFiles[index]?.name} ---`);
+                Object.entries(data).forEach(([key, value]) => {
+                    console.log(`${key}:`, value);
+                });
             });
-        });
+            
+            console.log('=== END EXTRACTED DATA DEBUG ===');
+        } else {
+            console.log('No extracted data available. Please process a PDF first.');
+        }
         
-        console.log('=== END EXTRACTED DATA DEBUG ===');
-    } else {
-        console.log('No extracted data available. Please process a PDF first.');
-    }
-    
-    this.showStatus('Debug info logged to console. Press F12 to view.', 'success');
-};
+        this.showStatus('Debug info logged to console. Press F12 to view.', 'success');
+    };
+} else {
+    console.error('❌ Cannot add debug functions - app not available');
+}

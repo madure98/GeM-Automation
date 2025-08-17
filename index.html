@@ -246,47 +246,6 @@
             transform: translateY(-2px);
         }
 
-        .extraction-summary {
-            background: #f8f9ff;
-            border: 1px solid #e9ecef;
-            border-radius: 10px;
-            padding: 20px;
-            margin: 20px 0;
-            text-align: left;
-        }
-
-        .extraction-summary h4 {
-            color: #333;
-            margin-bottom: 15px;
-            font-size: 1.1rem;
-        }
-
-        .summary-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 0;
-            border-bottom: 1px solid #e9ecef;
-        }
-
-        .summary-item:last-child {
-            border-bottom: none;
-        }
-
-        .summary-label {
-            font-weight: 600;
-            color: #333;
-        }
-
-        .summary-value {
-            color: #666;
-            text-align: right;
-            max-width: 200px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
         .status-message {
             padding: 15px;
             border-radius: 10px;
@@ -428,9 +387,6 @@
 
             <div class="download-section" id="downloadSection">
                 <h3>Excel Generated Successfully!</h3>
-                <div class="extraction-summary" id="extractionSummary">
-                    <!-- Summary will be populated here -->
-                </div>
                 <a href="#" class="download-btn" id="downloadBtn">
                     <i class="fas fa-download"></i> Download Excel File
                 </a>
