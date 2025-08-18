@@ -13,16 +13,24 @@
             box-sizing: border-box;
         }
 
+        html, body {
+            overflow-x: hidden;
+            max-width: 100%;
+        }
+
         body {
             font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #3DCD57;
             min-height: 100vh;
             padding: 20px;
+            overflow-x: hidden;
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
+            overflow-x: hidden;
+            width: 100%;
         }
 
         .header {
@@ -367,8 +375,8 @@
                     </div>
                     <div class="upload-text">Drop PDF files here</div>
                     <div class="upload-subtext">or click to browse files</div>
-                    <input type="file" id="fileInput" class="file-input" multiple accept=".pdf">
                 </div>
+                <input type="file" id="fileInput" class="file-input" multiple accept=".pdf" style="display: none;">
 
                 <div class="uploaded-files" id="uploadedFiles"></div>
 
@@ -428,24 +436,5 @@
     
     <!-- Load our application logic -->
     <script src="app.js"></script>
-    
-    <script>
-        // Add debug functionality
-        window.app.toggleDebug = function() {
-            const debugSection = document.getElementById('debugSection');
-            const debugContent = document.getElementById('debugContent');
-            
-            if (debugSection.style.display === 'none' || !debugSection.style.display) {
-                debugSection.style.display = 'block';
-                debugContent.textContent = JSON.stringify({
-                    uploadedFiles: this.uploadedFiles.map(f => ({ name: f.name, size: f.size })),
-                    extractedData: this.extractedData,
-                    timestamp: new Date().toISOString()
-                }, null, 2);
-            } else {
-                debugSection.style.display = 'none';
-            }
-        };
-    </script>
 </body>
 </html>
